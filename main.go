@@ -6,8 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
-
 	"log"
 	"net/http"
 	"strings"
@@ -53,6 +51,7 @@ func (h *httpStreamFactory) New(net, transport gopacket.Flow) tcpassembly.Stream
 	return &hstream.r
 }
 
+
 func (h *httpStream) run() {
 	buf := bufio.NewReader(&h.r)
 	for {
@@ -63,15 +62,16 @@ func (h *httpStream) run() {
 		} else if err != nil {
 			//log.Println("Error reading stream", h.net, h.transport, ":", err)
 		} else {
-			body, err := io.ReadAll(req.Body)
+			body := readBody(req);
 			// b, err := ioutil.ReadAll(resp.Body)  Go.1.15 and earlier
 			if err != nil {
 				println(err.Error())
 			}
-			if h.net.Dst().String() == *originHost {
-				
+			if req.Host == *originHost {			
 				println("")
 				println("SrcIP:", h.net.Src().String())
+				println("Host:", req.Host)
+				println("Schema:", req.URL.Scheme)
 				println("SrcPort:", h.transport.Src().String())
 				println("DstIP:", h.net.Dst().String())
 				println("DstPort:", h.transport.Dst().String())
@@ -83,30 +83,34 @@ func (h *httpStream) run() {
 				println("")
 			}
 
-			
 		}}
+}
+
+func readBody(req *http.Request) string {
+	buf, error := io.ReadAll(req.Body)
+	if error != nil {
+		println(error.Error())
+		return ""
+	}
+	body := io.NopCloser(bytes.NewBuffer(buf))
+	req.Body = body
+	return string(buf)
 }
 
 func forwardRequest(forwardHost *string, forwardPort *int, req *http.Request) {
 	schema := "http"
-	println(req.URL.Scheme)
 	if req.URL.Scheme != "" {
 		schema = req.URL.Scheme
 	}
 	url := fmt.Sprintf("%s://%s:%d%s", schema, *forwardHost, *forwardPort, req.RequestURI)
-	body, err := ioutil.ReadAll(req.Body)
-    if err != nil {
-        return
-    }
 	println(url)
     // you can reassign the body if you need to parse it as multipart
-    req.Body = ioutil.NopCloser(bytes.NewReader(body))
-	proxyReq, err := http.NewRequest(req.Method, url, bytes.NewReader(body))
+	
+	proxyReq, err := http.NewRequest(req.Method, url, req.Body)
 	if err != nil {
 		println (err.Error())
 	}
 	// We may want to filter some headers, otherwise we could just use a shallow copy
-	// proxyReq.Header = req.Header
 	proxyReq.Header = make(http.Header)
     for h, val := range req.Header {
         proxyReq.Header[h] = val
@@ -119,7 +123,11 @@ func forwardRequest(forwardHost *string, forwardPort *int, req *http.Request) {
 		println(err.Error())
         return
     }
-	println(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		println(err.Error())
+	}
+	println(string(respBody))
     defer resp.Body.Close()
 }
 
